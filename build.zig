@@ -17,7 +17,6 @@ pub fn build(b: *std.build.Builder) anyerror!void {
         var exe = b.addExecutable(name, source);
         exe.setBuildMode(b.standardReleaseOptions());
 
-        // for some reason exe_compiled + debug build results in "illegal instruction 4". Investigate at some point.
         linkArtifact(b, exe, target,"");
 
         const run_cmd = exe.run();
@@ -26,7 +25,6 @@ pub fn build(b: *std.build.Builder) anyerror!void {
 
         exe.install();
 
-        // first element in the list is added as "run" so "zig build run" works
         if (i == 0) {
             const run_exe_step = b.step("run", b.fmt("run {s}.zig", .{name}));
             run_exe_step.dependOn(&run_cmd.step);
@@ -45,8 +43,12 @@ pub fn linkArtifact(b: *Builder, artifact: *std.build.LibExeObjStep, target: std
 
 fn compileEnet(b: *Builder, exe: *std.build.LibExeObjStep, target: std.zig.CrossTarget, comptime prefix_path: []const u8) void {
     _ = b;
-    _ = target;
+    if (target.isWindows()) {
+        exe.linkSystemLibrary("winmm");
+        exe.linkSystemLibrary("ws2_32");
+    }
     exe.linkLibC();
+    
     exe.addIncludeDir(prefix_path ++ "enet/include/enet");
     exe.addIncludeDir(prefix_path ++ "enet/include");
 
