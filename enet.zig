@@ -10,11 +10,13 @@
 //
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 
 const root = @import("root");
 
-pub usingnamespace if (std.builtin.os.tag == .windows) WindowsPlatform else UnixPlatform;
+const Self = @This();
+pub usingnamespace if (builtin.os.tag == .windows) WindowsPlatform else UnixPlatform;
 
 // win32.h
 const WindowsPlatform = struct {
@@ -27,10 +29,7 @@ const WindowsPlatform = struct {
     pub const Buffer = extern struct {
         dataLength: usize,
         data: [*]u8,
-    };
-
-    pub const CallbackConvention = .C;
-    pub const ApiConvention = .C;
+    };   
 
     const FD_SETSIZE = 64;
     /// This structure is binary compatible with fd_set
@@ -79,9 +78,11 @@ const WindowsPlatform = struct {
 
 // unix.h
 const UnixPlatform = struct {
-    const libc_headers = @cImport();
+    //const libc_headers = @cImport();
 
-    pub const BUFFER_MAXIMUM = if (@hasAttr(libc_headers, "MSG_MAXIOVLEN")) libc_headers.MSG_MAXIOVLEN else @as(void, undefined);
+    //pub const BUFFER_MAXIMUM = if (@hasDecl(libc_headers, "MSG_MAXIOVLEN")) libc_headers.MSG_MAXIOVLEN else @as(void, undefined);
+    // pub const BUFFER_MAXIMUM = @as(void, undefined);
+
 
     pub const SocketHandle = c_int;
     pub const SOCKET_NULL: SocketHandle = -1;
@@ -91,15 +92,12 @@ const UnixPlatform = struct {
         dataLength: usize,
     };
 
-    pub const CallbackConvention = .C;
-    pub const ApiConvention = .C;
-
     const SocketSet = extern struct {
         const max_fd = 1024;
         const Mask = c_long;
         const MaskShift = std.math.Log2Int(Mask);
-        const mask_bits = 8 * @sizeOf(mask);
-        const num_masks = @divExact(total_size, mask_bits);
+        const mask_bits = 8 * @sizeOf(Mask);
+        const num_masks = @divExact(max_fd, mask_bits);
 
         fds_bits: [num_masks]Mask = [_]Mask{0} ** num_masks,
 
@@ -194,7 +192,7 @@ pub const Protocol = packed union {
     bandwidthLimit: BandwidthLimit,
     throttleConfigure: ThrottleConfigure,
 
-    pub const Command = extern enum(u8) {
+    pub const Command = enum(u8) {
         none = 0,
         acknowledge = 1,
         connect = 2,
@@ -435,9 +433,9 @@ pub fn List(comptime T: type) type {
 // enet/callbacks.h
 
 pub const Callbacks = extern struct {
-    malloc: ?fn (size: usize) callconv(CallbackConvention) *c_void = null,
-    free: ?fn (memory: *c_void) callconv(CallbackConvention) void = null,
-    no_memory: ?fn () callconv(CallbackConvention) void = null,
+    malloc: ?fn (size: usize) callconv(.C) *anyopaque = null,
+    free: ?fn (memory: *anyopaque) callconv(.C) void = null,
+    no_memory: ?fn () callconv(.C) void = null,
 };
 
 // enet/enet.h
@@ -468,7 +466,7 @@ pub const VERSION = VERSION_CREATE(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
 
 pub const Version = u32;
 
-pub const SocketType = extern enum {
+pub const SocketType = enum(c_int) {
     Stream = 1,
     Datagram = 2,
 };
@@ -483,7 +481,7 @@ comptime {
     assert(@sizeOf(SocketWait) == 4);
 }
 
-pub const SocketOption = extern enum {
+pub const SocketOption = enum(c_int) {
     nonblock = 1,
     broadcast = 2,
     rcvbuf = 3,
@@ -495,18 +493,18 @@ pub const SocketOption = extern enum {
     nodelay = 9,
 };
 
-pub const SocketShutdown = extern enum {
+pub const SocketShutdown = enum(c_int) {
     read = 0,
     write = 1,
     read_write = 2,
 };
 
 pub const Socket = extern struct {
-    handle: SocketHandle,
+    handle: Self.SocketHandle,
 
     pub fn create(kind: SocketType) !Socket {
         const handle = raw.enet_socket_create(kind);
-        if (handle == SOCKET_NULL) return error.ENetError;
+        if (handle == Self.SOCKET_NULL) return error.ENetError;
         return Socket{ .handle = handle };
     }
 
@@ -529,7 +527,7 @@ pub const Socket = extern struct {
 
     pub fn accept(self: Socket, out_address: ?*Address) !Socket {
         const socket = raw.enet_socket_accept(self.handle, out_address);
-        if (socket == SOCKET_NULL) return error.ENetError;
+        if (socket == Self.SOCKET_NULL) return error.ENetError;
         return Socket{ .handle = socket };
     }
 
@@ -538,19 +536,19 @@ pub const Socket = extern struct {
         if (rc < 0) return error.ENetError;
     }
 
-    pub fn send(self: Socket, buffers: []const Buffer) !usize {
+    pub fn send(self: Socket, buffers: []const Self.Buffer) !usize {
         const rc = raw.enet_socket_send(self.handle, null, buffers.ptr, buffers.len);
         if (rc < 0) return error.ENetError;
         return @intCast(usize, rc);
     }
 
-    pub fn sendTo(self: Socket, address: Address, buffers: []const Buffer) !usize {
+    pub fn sendTo(self: Socket, address: Address, buffers: []const Self.Buffer) !usize {
         const rc = raw.enet_socket_send(self.handle, &address, buffers.ptr, buffers.len);
         if (rc < 0) return error.ENetError;
         return @intCast(usize, rc);
     }
 
-    pub fn receive(self: Socket, out_address: ?*Address, buffers: []Buffer) !usize {
+    pub fn receive(self: Socket, out_address: ?*Address, buffers: []Self.Buffer) !usize {
         const rc = raw.enet_socket_receive(self.handle, out_address, buffers.ptr, buffers.len);
         if (rc < 0) return error.ENetError;
         return @intCast(usize, rc);
@@ -674,7 +672,7 @@ comptime {
     assert(@sizeOf(PacketFlags) == 4);
 }
 
-pub const PacketFreeCallback = fn (*Packet) callconv(CallbackConvention) void;
+pub const PacketFreeCallback = fn (*Packet) callconv(.C) void;
 
 /// ENet packet structure.
 ///
@@ -714,7 +712,7 @@ pub const Packet = extern struct {
     freeCallback: ?PacketFreeCallback,
 
     /// application private data, may be freely modified
-    userData: ?*c_void,
+    userData: ?*anyopaque,
 
     /// Creates a packet that may be sent to a peer.
     /// @param data    initial contents of the packet's data
@@ -777,7 +775,7 @@ pub const IncomingCommand = extern struct {
     packet: ?*Packet,
 };
 
-pub const PeerState = extern enum {
+pub const PeerState = enum(c_int) {
     disconnected = 0,
     connecting = 1,
     acknowledging_connect = 2,
@@ -855,7 +853,7 @@ pub const Peer = extern struct {
     address: Address,
 
     /// Application private data, may be freely modified
-    data: ?*c_void,
+    data: ?*anyopaque,
 
     state: PeerState,
     channels: ?[*]Channel,
@@ -1048,38 +1046,38 @@ pub const Peer = extern struct {
 
 pub const Compressor = extern struct {
     /// Context data for the compressor. Must be non-NULL.
-    context: *c_void,
+    context: *anyopaque,
 
     /// Compresses from inBuffers[0..inBufferCount], containing inLimit bytes, to outData, outputting at most outLimit bytes. Should return 0 on failure.
     compress: fn (
-        context: *c_void,
-        inBuffers: [*]const Buffer,
+        context: *anyopaque,
+        inBuffers: [*]const Self.Buffer,
         inBufferCount: usize,
         inLimit: usize,
         outData: [*]u8,
         outLimit: usize,
-    ) callconv(CallbackConvention) usize,
+    ) callconv(.C) usize,
 
     /// Decompresses from inData, containing inLimit bytes, to outData, outputting at most outLimit bytes. Should return 0 on failure.
     decompress: fn (
-        context: *c_void,
+        context: *anyopaque,
         inData: [*]const u8,
         inLimit: usize,
         outData: [*]u8,
         outLimit: usize,
-    ) callconv(CallbackConvention) usize,
+    ) callconv(.C) usize,
 
     /// Destroys the context when compression is disabled or the host is destroyed. May be NULL.
     destroy: ?fn (
-        context: *c_void,
-    ) callconv(CallbackConvention) void,
+        context: *anyopaque,
+    ) callconv(.C) void,
 };
 
 /// Callback that computes the checksum of the data held in buffers[0..bufferCount]
-pub const ChecksumCallback = fn (buffers: [*]const Buffer, bufferCount: usize) callconv(CallbackConvention) u32;
+pub const ChecksumCallback = fn (buffers: [*]const Self.Buffer, bufferCount: usize) callconv(.C) u32;
 
 /// Callback for intercepting received raw UDP packets. Should return 1 to intercept, 0 to ignore, or -1 to propagate an error.
-pub const InterceptCallback = fn (host: ?*Host, event: ?*Event) callconv(CallbackConvention) c_int;
+pub const InterceptCallback = fn (host: ?*Host, event: ?*Event) callconv(.C) c_int;
 
 /// An ENet host for communicating with peers.
 ///
@@ -1109,7 +1107,7 @@ pub const Host = extern struct {
     headerFlags: u16, // TODO is this a flag type?
     commands: [Protocol.MAXIMUM_PACKET_COMMANDS]Protocol,
     commandCount: usize,
-    buffers: [BUFFER_MAXIMUM]Buffer,
+    buffers: [BUFFER_MAXIMUM]Self.Buffer,
     bufferCount: usize,
     /// callback the user can set to enable packet checksums for this host
     checksum: ?ChecksumCallback,
@@ -1250,7 +1248,7 @@ pub const Host = extern struct {
 };
 
 /// An ENet event type, as specified in @ref Event
-pub const EventType = extern enum {
+pub const EventType = enum(c_int) {
     /// no event occurred within the specified time limit
     none = 0,
 
@@ -1335,76 +1333,76 @@ pub const time_set = raw.enet_time_set;
 
 /// fn crc32([]Buffer) u32
 /// Computes the crc32 hash of a series of buffers
-pub fn crc32(buffers: []Buffer) u32 {
+pub fn crc32(buffers: []Self.Buffer) u32 {
     return raw.enet_crc32(buffers.ptr, buffers.len);
 }
 
-pub fn select(max_socket: SocketHandle, in_out_read: ?*SocketSet, in_out_write: ?*SocketSet, timeout: u32) !void {
+pub fn select(max_socket: Self.SocketHandle, in_out_read: ?*Self.SocketSet, in_out_write: ?*Self.SocketSet, timeout: u32) !void {
     const rc = raw.enet_socketset_select(max_socket, in_out_read, in_out_write, timeout);
     if (rc < 0) return error.ENetError;
 }
 
 pub const raw = struct {
-    pub extern fn enet_initialize() callconv(ApiConvention) c_int;
-    pub extern fn enet_initialize_with_callbacks(version: Version, inits: *const Callbacks) callconv(ApiConvention) c_int;
-    pub extern fn enet_deinitialize() callconv(ApiConvention) void;
-    pub extern fn enet_linked_version() callconv(ApiConvention) Version;
+    pub extern fn enet_initialize() callconv(.C) c_int;
+    pub extern fn enet_initialize_with_callbacks(version: Version, inits: *const Callbacks) callconv(.C) c_int;
+    pub extern fn enet_deinitialize() callconv(.C) void;
+    pub extern fn enet_linked_version() callconv(.C) Version;
 
-    pub extern fn enet_time_get() callconv(ApiConvention) u32;
-    pub extern fn enet_time_set(time: u32) callconv(ApiConvention) void;
+    pub extern fn enet_time_get() callconv(.C) u32;
+    pub extern fn enet_time_set(time: u32) callconv(.C) void;
 
-    pub extern fn enet_socket_create(SocketType) callconv(ApiConvention) SocketHandle;
-    pub extern fn enet_socket_bind(SocketHandle, *const Address) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_get_address(SocketHandle, *Address) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_listen(SocketHandle, c_int) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_accept(SocketHandle, ?*Address) callconv(ApiConvention) SocketHandle;
-    pub extern fn enet_socket_connect(SocketHandle, *const Address) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_send(SocketHandle, ?*const Address, [*]const Buffer, usize) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_receive(SocketHandle, ?*Address, [*]Buffer, usize) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_wait(SocketHandle, *u32, u32) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_set_option(SocketHandle, SocketOption, c_int) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_get_option(SocketHandle, SocketOption, *c_int) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_shutdown(SocketHandle, SocketShutdown) callconv(ApiConvention) c_int;
-    pub extern fn enet_socket_destroy(SocketHandle) callconv(ApiConvention) void;
-    pub extern fn enet_socketset_select(SocketHandle, ?*SocketSet, ?*SocketSet, u32) callconv(ApiConvention) c_int;
+    pub extern fn enet_socket_create(Self.SocketType) callconv(.C) Self.SocketHandle;
+    pub extern fn enet_socket_bind(Self.SocketHandle, *const Address) callconv(.C) c_int;
+    pub extern fn enet_socket_get_address(Self.SocketHandle, *Address) callconv(.C) c_int;
+    pub extern fn enet_socket_listen(Self.SocketHandle, c_int) callconv(.C) c_int;
+    pub extern fn enet_socket_accept(Self.SocketHandle, ?*Address) callconv(.C) Self.SocketHandle;
+    pub extern fn enet_socket_connect(Self.SocketHandle, *const Address) callconv(.C) c_int;
+    pub extern fn enet_socket_send(Self.SocketHandle, ?*const Address, [*]const Self.Buffer, usize) callconv(.C) c_int;
+    pub extern fn enet_socket_receive(Self.SocketHandle, ?*Address, [*]Self.Buffer, usize) callconv(.C) c_int;
+    pub extern fn enet_socket_wait(Self.SocketHandle, *u32, u32) callconv(.C) c_int;
+    pub extern fn enet_socket_set_option(Self.SocketHandle, SocketOption, c_int) callconv(.C) c_int;
+    pub extern fn enet_socket_get_option(Self.SocketHandle, SocketOption, *c_int) callconv(.C) c_int;
+    pub extern fn enet_socket_shutdown(Self.SocketHandle, SocketShutdown) callconv(.C) c_int;
+    pub extern fn enet_socket_destroy(Self.SocketHandle) callconv(.C) void;
+    pub extern fn enet_socketset_select(Self.SocketHandle, ?*Self.SocketSet, ?*Self.SocketSet, u32) callconv(.C) c_int;
 
-    pub extern fn enet_address_set_host_ip(address: *Address, hostName: [*:0]const u8) callconv(ApiConvention) c_int;
-    pub extern fn enet_address_set_host(address: *Address, hostName: [*:0]const u8) callconv(ApiConvention) c_int;
-    pub extern fn enet_address_get_host_ip(address: *const Address, hostName: [*]u8, nameLength: usize) callconv(ApiConvention) c_int;
-    pub extern fn enet_address_get_host(address: *const Address, hostName: [*]u8, nameLength: usize) callconv(ApiConvention) c_int;
+    pub extern fn enet_address_set_host_ip(address: *Address, hostName: [*:0]const u8) callconv(.C) c_int;
+    pub extern fn enet_address_set_host(address: *Address, hostName: [*:0]const u8) callconv(.C) c_int;
+    pub extern fn enet_address_get_host_ip(address: *const Address, hostName: [*]u8, nameLength: usize) callconv(.C) c_int;
+    pub extern fn enet_address_get_host(address: *const Address, hostName: [*]u8, nameLength: usize) callconv(.C) c_int;
 
-    pub extern fn enet_packet_create(?[*]const u8, usize, u32) callconv(ApiConvention) ?*Packet;
-    pub extern fn enet_packet_destroy(*Packet) callconv(ApiConvention) void;
-    pub extern fn enet_packet_resize(*Packet, usize) callconv(ApiConvention) c_int;
-    pub extern fn enet_crc32([*]const Buffer, usize) callconv(ApiConvention) u32;
+    pub extern fn enet_packet_create(?[*]const u8, usize, u32) callconv(.C) ?*Packet;
+    pub extern fn enet_packet_destroy(*Packet) callconv(.C) void;
+    pub extern fn enet_packet_resize(*Packet, usize) callconv(.C) c_int;
+    pub extern fn enet_crc32([*]const Self.Buffer, usize) callconv(.C) u32;
 
-    pub extern fn enet_host_create(?*const Address, usize, usize, u32, u32) callconv(ApiConvention) ?*Host;
-    pub extern fn enet_host_destroy(*Host) callconv(ApiConvention) void;
-    pub extern fn enet_host_connect(*Host, *const Address, usize, u32) callconv(ApiConvention) ?*Peer;
-    pub extern fn enet_host_check_events(*Host, *Event) callconv(ApiConvention) c_int;
-    pub extern fn enet_host_service(*Host, ?*Event, u32) callconv(ApiConvention) c_int;
-    pub extern fn enet_host_flush(*Host) callconv(ApiConvention) void;
-    pub extern fn enet_host_broadcast(*Host, u8, *Packet) callconv(ApiConvention) void;
-    pub extern fn enet_host_compress(*Host, ?*const Compressor) callconv(ApiConvention) void;
-    pub extern fn enet_host_compress_with_range_coder(*Host) callconv(ApiConvention) c_int;
-    pub extern fn enet_host_channel_limit(*Host, usize) callconv(ApiConvention) void;
-    pub extern fn enet_host_bandwidth_limit(*Host, u32, u32) callconv(ApiConvention) void;
+    pub extern fn enet_host_create(?*const Address, usize, usize, u32, u32) callconv(.C) ?*Host;
+    pub extern fn enet_host_destroy(*Host) callconv(.C) void;
+    pub extern fn enet_host_connect(*Host, *const Address, usize, u32) callconv(.C) ?*Peer;
+    pub extern fn enet_host_check_events(*Host, *Event) callconv(.C) c_int;
+    pub extern fn enet_host_service(*Host, ?*Event, u32) callconv(.C) c_int;
+    pub extern fn enet_host_flush(*Host) callconv(.C) void;
+    pub extern fn enet_host_broadcast(*Host, u8, *Packet) callconv(.C) void;
+    pub extern fn enet_host_compress(*Host, ?*const Compressor) callconv(.C) void;
+    pub extern fn enet_host_compress_with_range_coder(*Host) callconv(.C) c_int;
+    pub extern fn enet_host_channel_limit(*Host, usize) callconv(.C) void;
+    pub extern fn enet_host_bandwidth_limit(*Host, u32, u32) callconv(.C) void;
 
-    pub extern fn enet_peer_send(*Peer, u8, *Packet) callconv(ApiConvention) c_int;
-    pub extern fn enet_peer_receive(*Peer, channelID: *u8) callconv(ApiConvention) ?*Packet;
-    pub extern fn enet_peer_ping(*Peer) callconv(ApiConvention) void;
-    pub extern fn enet_peer_ping_interval(*Peer, u32) callconv(ApiConvention) void;
-    pub extern fn enet_peer_timeout(*Peer, u32, u32, u32) callconv(ApiConvention) void;
-    pub extern fn enet_peer_reset(*Peer) callconv(ApiConvention) void;
-    pub extern fn enet_peer_disconnect(*Peer, u32) callconv(ApiConvention) void;
-    pub extern fn enet_peer_disconnect_now(*Peer, u32) callconv(ApiConvention) void;
-    pub extern fn enet_peer_disconnect_later(*Peer, u32) callconv(ApiConvention) void;
-    pub extern fn enet_peer_throttle_configure(*Peer, u32, u32, u32) callconv(ApiConvention) void;
+    pub extern fn enet_peer_send(*Peer, u8, *Packet) callconv(.C) c_int;
+    pub extern fn enet_peer_receive(*Peer, channelID: *u8) callconv(.C) ?*Packet;
+    pub extern fn enet_peer_ping(*Peer) callconv(.C) void;
+    pub extern fn enet_peer_ping_interval(*Peer, u32) callconv(.C) void;
+    pub extern fn enet_peer_timeout(*Peer, u32, u32, u32) callconv(.C) void;
+    pub extern fn enet_peer_reset(*Peer) callconv(.C) void;
+    pub extern fn enet_peer_disconnect(*Peer, u32) callconv(.C) void;
+    pub extern fn enet_peer_disconnect_now(*Peer, u32) callconv(.C) void;
+    pub extern fn enet_peer_disconnect_later(*Peer, u32) callconv(.C) void;
+    pub extern fn enet_peer_throttle_configure(*Peer, u32, u32, u32) callconv(.C) void;
 
-    pub extern fn enet_range_coder_create() callconv(ApiConvention) *c_void;
-    pub extern fn enet_range_coder_destroy(*c_void) callconv(ApiConvention) void;
-    pub extern fn enet_range_coder_compress(*c_void, *const Buffer, usize, usize, [*]u8, usize) callconv(ApiConvention) usize;
-    pub extern fn enet_range_coder_decompress(*c_void, [*]const u8, usize, [*]u8, usize) callconv(ApiConvention) usize;
+    pub extern fn enet_range_coder_create() callconv(.C) *anyopaque;
+    pub extern fn enet_range_coder_destroy(*anyopaque) callconv(.C) void;
+    pub extern fn enet_range_coder_compress(*anyopaque, *const Self.Buffer, usize, usize, [*]u8, usize) callconv(.C) usize;
+    pub extern fn enet_range_coder_decompress(*anyopaque, [*]const u8, usize, [*]u8, usize) callconv(.C) usize;
 
     /// These functions are declared in enet.h but are not exported in DLL builds.
     /// They probably shouldn't be used.
@@ -1422,7 +1420,7 @@ pub const raw = struct {
         pub extern fn enet_peer_on_connect(*Peer) callconv(.C) void;
         pub extern fn enet_peer_on_disconnect(*Peer) callconv(.C) void;
         pub extern fn enet_protocol_command_size(u8) callconv(.C) usize;
-        pub extern fn enet_malloc(usize) callconv(.C) ?*c_void;
-        pub extern fn enet_free(?*c_void) callconv(.C) void;
+        pub extern fn enet_malloc(usize) callconv(.C) ?*anyopaque;
+        pub extern fn enet_free(?*anyopaque) callconv(.C) void;
     };
 };
