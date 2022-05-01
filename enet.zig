@@ -78,12 +78,6 @@ const WindowsPlatform = struct {
 
 // unix.h
 const UnixPlatform = struct {
-    //const libc_headers = @cImport();
-
-    //pub const BUFFER_MAXIMUM = if (@hasDecl(libc_headers, "MSG_MAXIOVLEN")) libc_headers.MSG_MAXIOVLEN else @as(void, undefined);
-    // pub const BUFFER_MAXIMUM = @as(void, undefined);
-
-
     pub const SocketHandle = c_int;
     pub const SOCKET_NULL: SocketHandle = -1;
 
