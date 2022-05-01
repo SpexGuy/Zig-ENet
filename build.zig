@@ -1,65 +1,109 @@
-const builtin = @import("builtin");
 const std = @import("std");
-const Builder = std.build.Builder;
 
-pub fn build(b: *std.build.Builder) anyerror!void {
+pub fn build(b: *std.build.Builder) void {
+    const build_mode = b.standardReleaseOptions();
     const target = b.standardTargetOptions(.{});
+    const tests = buildTests(b, build_mode, target);
 
-    const examples = [_][2][]const u8{
-        [_][]const u8{ "client", "examples/client.zig" },
-        [_][]const u8{ "server", "examples/server.zig" },
-    };
+    const lib_step = buildLibrary(b, build_mode, target);
+    lib_step.install();
 
-    for (examples) |example, i| {
-        const name = example[0];
-        const source = example[1];
+    const test_step = b.step("test", "Run enet tests");
+    test_step.dependOn(&tests.step);
 
-        var exe = b.addExecutable(name, source);
-        exe.setBuildMode(b.standardReleaseOptions());
+    {
+        const client_exe = b.addExecutable("client", "examples/client.zig");
+        client_exe.setBuildMode(build_mode);
+        client_exe.setTarget(target);
+        link(b, client_exe);
 
-        linkArtifact(b, exe, target,"");
+        const client_install = b.addInstallArtifact(client_exe);
 
-        const run_cmd = exe.run();
-        const exe_step = b.step(name, b.fmt("run {s}.zig", .{name}));
-        exe_step.dependOn(&run_cmd.step);
+        const client_build_step = b.step("examples:client:install", "Build the client example");
+        client_build_step.dependOn(&client_install.step);
 
-        exe.install();
+        const client_run_step = b.step("examples:client:run", "Run the client example");
+        client_run_step.dependOn(&client_exe.run().step);
+    }
 
-        if (i == 0) {
-            const run_exe_step = b.step("run", b.fmt("run {s}.zig", .{name}));
-            run_exe_step.dependOn(&run_cmd.step);
-        }
+    {
+        const server_exe = b.addExecutable("server", "examples/server.zig");
+        server_exe.setBuildMode(build_mode);
+        server_exe.setTarget(target);
+        link(b, server_exe);
+
+        const server_install = b.addInstallArtifact(server_exe);
+
+        const server_build_step = b.step("examples:server:install", "Build the server example");
+        server_build_step.dependOn(&server_install.step);
+
+        const server_run_step = b.step("examples:server:run", "Run the server example");
+        server_run_step.dependOn(&server_exe.run().step);
     }
 }
 
-/// prefix_path is used to add package paths. It should be the the same path used to include this build file
-pub fn linkArtifact(b: *Builder, artifact: *std.build.LibExeObjStep, target: std.zig.CrossTarget, comptime prefix_path: []const u8) void {
-    if (prefix_path.len > 0 and !std.mem.endsWith(u8, prefix_path, "/")) @panic("prefix-path must end with '/' if it is not empty");
-
-    compileEnet(b, artifact, target, prefix_path);
-
-    artifact.addPackagePath("enet", prefix_path ++ "enet.zig");
+pub fn buildTests(
+    b: *std.build.Builder,
+    build_mode: std.builtin.Mode,
+    target: std.zig.CrossTarget,
+) *std.build.LibExeObjStep {
+    const tests = b.addTest(thisDir() ++ "/enet.zig");
+    tests.setBuildMode(build_mode);
+    tests.setTarget(target);
+    link(b, tests);
+    return tests;
 }
 
-fn compileEnet(b: *Builder, exe: *std.build.LibExeObjStep, target: std.zig.CrossTarget, comptime prefix_path: []const u8) void {
-    _ = b;
+pub fn buildLibrary(
+    b: *std.build.Builder,
+    build_mode: std.builtin.Mode,
+    target: std.zig.CrossTarget,
+) *std.build.LibExeObjStep {
+    const lib = b.addStaticLibrary("enet", null);
+
+    lib.setBuildMode(build_mode);
+    lib.setTarget(target);
+    lib.want_lto = false;
+    lib.addIncludeDir(thisDir() ++ "/enet/include");
+    lib.linkSystemLibrary("c");
+
     if (target.isWindows()) {
-        exe.linkSystemLibrary("winmm");
-        exe.linkSystemLibrary("ws2_32");
+        lib.linkSystemLibrary("ws2_32");
+        lib.linkSystemLibrary("winmm");
     }
-    exe.linkLibC();
-    
-    exe.addIncludeDir(prefix_path ++ "enet/include/enet");
-    exe.addIncludeDir(prefix_path ++ "enet/include");
 
-    const cflags = &[_][]const u8{ "" };
-    exe.addCSourceFile(prefix_path ++ "enet/callbacks.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/compress.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/host.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/list.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/packet.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/peer.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/protocol.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/unix.c", cflags);
-    exe.addCSourceFile(prefix_path ++ "enet/win32.c", cflags);
+    const defines = .{
+        "-DHAS_FCNTL=1",
+        "-DHAS_POLL=1",
+        "-DHAS_GETNAMEINFO=1",
+        "-DHAS_GETADDRINFO=1",
+        "-DHAS_GETHOSTBYNAME_R=1",
+        "-DHAS_GETHOSTBYADDR_R=1",
+        "-DHAS_INET_PTON=1",
+        "-DHAS_INET_NTOP=1",
+        "-DHAS_MSGHDR_FLAGS=1",
+        "-DHAS_SOCKLEN_T=1",
+        "-fno-sanitize=undefined",
+    };
+    lib.addCSourceFile(thisDir() ++ "/enet/callbacks.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/compress.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/host.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/list.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/packet.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/peer.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/protocol.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/unix.c", &defines);
+    lib.addCSourceFile(thisDir() ++ "/enet/win32.c", &defines);
+
+    return lib;
+}
+
+pub fn link(b: *std.build.Builder, step: *std.build.LibExeObjStep) void {
+    const lib = buildLibrary(b, step.build_mode, step.target);
+    step.linkLibrary(lib);
+    step.addPackagePath("enet", thisDir() ++ "/enet.zig");
+}
+
+fn thisDir() []const u8 {
+    return std.fs.path.dirname(@src().file) orelse ".";
 }
